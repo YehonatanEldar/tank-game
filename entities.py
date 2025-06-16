@@ -1,8 +1,9 @@
 import numpy as np
 import pygame as pg
+import time
 
 from constants import (BulletConstants, ControllerConstants, EnemyConstants,
-                       EnemyWaveConstants, GunConstants, PlayerConstants, ScreenConstants)
+                       EnemyWaveConstants, GunConstants, PlayerConstants, ScreenConstants, ObstaclesConstants)
 
 
 class Entity:
@@ -10,7 +11,16 @@ class Entity:
         self.rect = pg.Rect(x, y, width, height)
         self.color = color  # Color of the entity
 
-    def move(self, dx, dy):
+    def move(self, dx, dy, obstacles):
+        # Calculate the new position
+        new_rect = self.rect.move(dx, dy)
+
+        # Check for collisions with obstacles
+        for obstacle in obstacles:
+            if new_rect.colliderect(obstacle.rect):
+                return  # Cancel movement if collision occurs
+
+        # Move the entity if no collision
         self.rect.move_ip(dx, dy)
 
     def draw(self, surface):
@@ -23,7 +33,7 @@ class Player(Entity):
         self.speed = PlayerConstants.SPEED.value  # Movement speed
         self.gun = Gun(self)  # Create a gun for the player
 
-    def handle_input(self, controller):
+    def handle_input(self, controller, obstacles):
         # Get joystick axis values
         left_x = controller.get_axis(0)  # Left joystick X-axis
         left_y = controller.get_axis(1)  # Left joystick Y-axis
@@ -42,7 +52,8 @@ class Player(Entity):
         if self.rect.bottom + dy > ScreenConstants.HEIGHT.value:
             dy = ScreenConstants.HEIGHT.value - self.rect.bottom
 
-        self.move(dx, dy)
+        # Move the player, considering obstacles
+        self.move(dx, dy, obstacles)
 
     def draw(self, surface):
         pg.draw.rect(surface, self.color, self.rect)
@@ -123,10 +134,20 @@ class Bullet(Entity):
         self.angle = angle
         self.speed = BulletConstants.SPEED.value  # Speed of the bullet
 
-    def update(self):
-        # Move the bullet in the direction of its angle
-        self.rect.x += int(np.cos(np.radians(self.angle)) * self.speed)
-        self.rect.y += int(np.sin(np.radians(self.angle)) * self.speed)
+    def update(self, obstacles, bullets):
+        # Calculate new position
+        dx = int(np.cos(np.radians(self.angle)) * self.speed)
+        dy = int(np.sin(np.radians(self.angle)) * self.speed)
+
+        # Check for collisions with obstacles
+        new_rect = self.rect.move(dx, dy)
+        for obstacle in obstacles:
+            if new_rect.colliderect(obstacle.rect):
+                bullets.remove(self)  # Remove the bullet if it hits an obstacle
+                return
+
+        # Move the bullet if no collision
+        self.move(dx, dy, obstacles)
 
     def is_outside_screen(self):
         # Check if the bullet is outside the screen
@@ -143,11 +164,21 @@ class Bullet(Entity):
 
 
 class Enemy(Entity):
-    def __init__(self, x, y):
-        super().__init__(x, y, EnemyConstants.WIDTH.value, EnemyConstants.HEIGHT.value, EnemyConstants.COLOR.value)
-        self.speed = EnemyConstants.SPEED.value  # Movement speed
+    def __init__(self, x, y, speed, color, score_value):
+        """
+        Initializes an enemy with specified attributes.
 
-    def update(self, player):
+        :param x: X-coordinate of the enemy.
+        :param y: Y-coordinate of the enemy.
+        :param speed: Speed of the enemy.
+        :param color: Color of the enemy.
+        :param score_value: The score value awarded when the enemy is killed.
+        """
+        super().__init__(x, y, EnemyConstants.WIDTH.value, EnemyConstants.HEIGHT.value, color)
+        self.speed = speed
+        self.score_value = score_value  # Score value for killing this enemy
+
+    def update(self, player, obstacles):
         # Move toward the player
         dx = player.rect.centerx - self.rect.centerx
         dy = player.rect.centery - self.rect.centery
@@ -166,36 +197,43 @@ class Enemy(Entity):
         if self.rect.bottom + dy > ScreenConstants.HEIGHT.value:
             dy = ScreenConstants.HEIGHT.value - self.rect.bottom
 
-        self.move(dx, dy)
+        # Move the enemy, considering obstacles
+        self.move(dx, dy, obstacles)
 
         bullets = player.gun.bullets
         # Check for collisions with bullets
         for bullet in bullets:
             distance = np.sqrt((self.rect.centerx - bullet.rect.centerx) ** 2 + (self.rect.centery - bullet.rect.centery) ** 2)
             if distance < EnemyConstants.WIDTH.value // 2 + BulletConstants.RADIUS.value:
-                # Handle collision with bullet (e.g., remove enemy, remove bullet, etc.)
-                print("Enemy hit by bullet!")
-                bullets.remove(bullet)
-                return False
+                bullets.remove(bullet)  # Remove the bullet
+                return False  # Return False to indicate the enemy was killed
 
         # Check for collisions with player
         if self.rect.colliderect(player.rect):
-            # Handle collision with player (e.g., reduce health, end game, etc.)
             print("Enemy collided with player!")
             exit()
 
         return True
 
     def draw(self, surface):
-        # Draw the enemy as a circle
         pg.draw.circle(surface, self.color, self.rect.center, EnemyConstants.WIDTH.value // 2)
 
 
 class EnemyWave:
-    def __init__(self, num_enemies):
+    def __init__(self, num_enemies, speed, color, score_value):
+        """
+        Initializes an enemy wave with specified attributes.
+
+        :param num_enemies: Number of enemies in the wave.
+        :param speed: Speed of the enemies.
+        :param color: Color of the enemies.
+        :param score_value: Score value for each enemy in the wave.
+        """
         self.enemies = []
+        self.speed = speed
+        self.color = color
+
         for _ in range(num_enemies):
-            # Start on random pos on top bottom left or right
             side = np.random.choice(['top', 'bottom', 'left', 'right'])
             if side == 'top':
                 x = np.random.randint(0, ScreenConstants.WIDTH.value)
@@ -209,14 +247,85 @@ class EnemyWave:
             else:
                 x = ScreenConstants.WIDTH.value - EnemyConstants.WIDTH.value
                 y = np.random.randint(0, ScreenConstants.HEIGHT.value)
-            enemy = Enemy(x, y)
+
+            enemy = Enemy(x, y, self.speed, self.color, score_value)
             self.enemies.append(enemy)
 
-    def update(self, player):
+    def update(self, player, obstacles):
         for enemy in self.enemies:
-            if not enemy.update(player):
-                self.enemies.remove(enemy)
+            enemy.update(player, obstacles)
 
     def draw(self, surface):
         for enemy in self.enemies:
             enemy.draw(surface)
+
+
+class Obstacle(Entity):
+    def __init__(self, x, y, width, height, color=(0, 255, 0)):
+        super().__init__(x, y, width, height, ObstaclesConstants.COLOR.value)
+
+    def draw(self, surface):
+        pg.draw.rect(surface, self.color, self.rect)
+
+
+class Level:
+    def __init__(self, controller, player, obstacles, enemy_waves, wave_intervals):
+        """
+        Initializes the level with obstacles, enemy waves, and wave intervals.
+
+        :param controller: The game controller.
+        :param player: The player entity.
+        :param obstacles: A list of obstacles.
+        :param enemy_waves: A list of enemy waves.
+        :param wave_intervals: A list of seconds to wait between each wave.
+        """
+        self.controller = controller
+        self.player = player
+        self.obstacles = obstacles
+        self.enemy_waves = enemy_waves
+        self.wave_intervals = wave_intervals
+        self.current_wave_index = 0
+        self.last_wave_time = time.time()
+        self.score = 0  # Initialize score
+
+    def update(self):
+        # Handle player input
+        self.player.handle_input(self.controller, self.obstacles)
+        self.player.gun.handle_input(self.controller)
+
+        # Update active enemy waves
+        if self.current_wave_index < len(self.enemy_waves):
+            current_time = time.time()
+            if current_time - self.last_wave_time >= self.wave_intervals[self.current_wave_index]:
+                self.last_wave_time = current_time
+                self.current_wave_index += 1
+
+        for i in range(self.current_wave_index):
+            for enemy in self.enemy_waves[i].enemies[:]:  # Iterate over a copy of the list
+                if not enemy.update(self.player, self.obstacles):
+                    self.score += enemy.score_value  # Add enemy's score value to the level's score
+                    self.enemy_waves[i].enemies.remove(enemy)
+
+        # Update bullets
+        for bullet in self.player.gun.bullets[:]:
+            bullet.update(self.obstacles, self.player.gun.bullets)
+            if bullet.is_outside_screen():
+                self.player.gun.bullets.remove(bullet)
+
+    def draw(self, surface):
+        # Draw obstacles
+        for obstacle in self.obstacles:
+            obstacle.draw(surface)
+
+        # Draw player and gun
+        self.player.draw(surface)
+        self.player.gun.draw(surface)
+
+        # Draw bullets
+        for bullet in self.player.gun.bullets:
+            bullet.draw(surface)
+
+        # Draw active enemy waves
+        for i in range(self.current_wave_index):
+            self.enemy_waves[i].draw(surface)
+

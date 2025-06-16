@@ -30,6 +30,11 @@ class EnemyConstants(Enum):
     WIDTH = 40
     HEIGHT = 40
 
+class ObstaclesConstants(Enum):
+    COLOR = (210, 180, 140)  # Gray color for obstacles
+    WIDTH = 60  # Width of the obstacle rectangle
+    HEIGHT = 60  # Height of the obstacle rectangle
+
 
 class EnemyWaveConstants(Enum):
     SIZE = 5  # Number of enemies per wave
